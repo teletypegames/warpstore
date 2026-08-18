@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # Bumped when the on-disk shape of state.json changes. v1 keyed `installed` by
 # bare software name; v2 keys by `<scope>:<name>`.
@@ -51,6 +51,9 @@ class Skip(Exception):
 # so two stores on one machine are told apart in a shared log.
 TAG = "warpstore"
 VERBOSE = False
+# Where the human-readable log goes. An engine asked for machine-readable output
+# moves it to stderr, so stdout carries data and nothing else.
+LOG_STREAM = sys.stdout
 
 
 def set_tag(tag):
@@ -63,8 +66,13 @@ def set_verbose(flag):
     VERBOSE = bool(flag)
 
 
+def set_log_stream(stream):
+    global LOG_STREAM
+    LOG_STREAM = stream
+
+
 def log(msg):
-    print(f"[{TAG}] {msg}", flush=True)
+    print(f"[{TAG}] {msg}", file=LOG_STREAM, flush=True)
 
 
 def debug(msg):
