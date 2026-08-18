@@ -59,7 +59,7 @@ can carry a game of the same name without colliding.
 | Area | Functions |
 |---|---|
 | Logging | `set_tag`, `set_verbose`, `log`, `debug`, `die` |
-| Files | `load_json`, `write_json`, `write_atomic`, `within` |
+| Files | `load_json`, `write_json`, `write_atomic`, `within`, `prune_empty_dirs` |
 | Config | `deep_merge`, `load_config` |
 | Store home | `init`, then `HOME`, `CONFIG_PATH`, `STATE_PATH`, `CATALOG_CACHE` |
 | HTTP | `http_get`, `http_download`, `api_url`, `download_url`, `user_agent` |
@@ -67,7 +67,7 @@ can carry a game of the same name without colliding.
 | Catalog | `fetch_catalog`, `select_games`, `pick_release`, `asset_basename`, `download_image` |
 | State | `load_state`, `save_state`, `game_key`, `record_scope`, `records_by_scope`, `match_keys`, `limit_to_names` |
 
-Three of them carry decisions worth knowing about.
+Four of them carry decisions worth knowing about.
 
 **`resolve_for_host(value, host)`** — a config value that may depend on the
 machine. A plain string is the same everywhere (that is what a `cartridge` is:
@@ -80,9 +80,41 @@ skipped rather than installing something that cannot run.
 store may only remove files from the subtree it owns, never from the user's own
 library and never from another store's.
 
+**`prune_empty_dirs(dirs, root)`** — the uninstall side of the same rule. A store
+that has removed everything should not leave its folders behind, but only empty
+directories go, and only inside `root`: one surprise file is enough to keep a
+directory.
+
 **`write_atomic`** — nothing is ever written in place. A store interrupted
 mid-sync would otherwise leave a half-written playlist or gamelist, which is
 worse than an old one.
+
+## Taking every store off a machine
+
+```sh
+curl -fsSL https://git.teletypegames.org/engines/warpstore/raw/branch/master/uninstall.sh | sh
+```
+
+A single store is better removed by its own engine's `uninstall.sh`, which knows
+that host's extras — a Batocera Ports entry, say. This one is for taking the
+whole framework off a machine without having to remember what is installed: it
+finds every store home under the known roots, has each store's **own engine**
+purge what it installed, and then deletes the store, its launcher and the engine
+files.
+
+| Environment variable | Meaning |
+|---|---|
+| `DRY_RUN` | `1` to print what would go and remove nothing |
+| `KEEP_GAMES` | `1` to remove only the scripts and leave the installed games |
+| `FORCE` | `1` to purge even while RetroArch is running |
+| `BATOCERA_STORE_ROOT`, `BATOCERA_PORTS_DIR` | where to look on a Batocera box |
+| `STORE_ROOT`, `BIN_DIR` | where to look on a desktop |
+
+If any engine cannot finish — RetroArch running, a ROMs root unmounted — the run
+stops there rather than deleting the engine that knows what it installed.
+
+The script is POSIX `sh`, not bash, so `| sh` works on a machine whose `/bin/sh`
+is dash. The engines' own installers and uninstallers are too.
 
 ## State
 
@@ -104,8 +136,8 @@ keyed by bare software name, is re-keyed on first run.
 
 ## Users
 
-- [`warp-engine-batocera-store`](https://git.teletypegames.org/tools/warp-engine-batocera-store) — EmulationStation ROM folders, `gamelist.xml`, Ports launchers
-- [`warp-engine-retroarch-store`](https://git.teletypegames.org/tools/warp-engine-retroarch-store) — RetroArch `.lpl` playlists and thumbnail folders
+- [`warp-engine-batocera-store`](https://git.teletypegames.org/stores/warp-engine-batocera-store) — EmulationStation ROM folders, `gamelist.xml`, Ports launchers
+- [`warp-engine-retroarch-store`](https://git.teletypegames.org/stores/warp-engine-retroarch-store) — RetroArch `.lpl` playlists and thumbnail folders
 
 Both pin nothing: they fetch `warpstore.py` from this repository's `master` at
 install time. A change here therefore reaches every store on its next install —

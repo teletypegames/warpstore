@@ -8,8 +8,8 @@ matching the machine we are running on, remembering what we put where — is her
 
 Two engines use it today:
 
-    tools/warp-engine-batocera-store    EmulationStation ROM folders + gamelist.xml
-    tools/warp-engine-retroarch-store   RetroArch .lpl playlists + thumbnails
+    stores/warp-engine-batocera-store    EmulationStation ROM folders + gamelist.xml
+    stores/warp-engine-retroarch-store   RetroArch .lpl playlists + thumbnails
 
 An adapter supplies three things: a `DEFAULT_CONFIG` describing its own host, an
 `accept()` callback deciding which catalog entries that host can run, and the
@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # Bumped when the on-disk shape of state.json changes. v1 keyed `installed` by
 # bare software name; v2 keys by `<scope>:<name>`.
@@ -129,6 +129,35 @@ def within(path, root):
     path = os.path.abspath(path)
     root = os.path.abspath(root)
     return path == root or path.startswith(root + os.sep)
+
+
+def prune_empty_dirs(dirs, root=None, dry_run=False):
+    """Remove those of `dirs` that are now empty, deepest first.
+
+    A store that has uninstalled everything should not leave its folders behind.
+    Only empty directories go, and only inside `root` when one is given — so one
+    surprise file is enough to keep a directory, and a wrong path cannot reach
+    outside the store's own subtree.
+    """
+    ordered = sorted({os.path.abspath(d) for d in dirs if d},
+                     key=lambda p: p.count(os.sep), reverse=True)
+    for path in ordered:
+        if root and not within(path, root):
+            log(f"warning: refusing to remove {path} (outside {root})")
+            continue
+        if not os.path.isdir(path):
+            continue
+        if os.listdir(path):
+            debug(f"keeping {path} (not empty)")
+            continue
+        if dry_run:
+            log(f"would remove the empty {path}")
+            continue
+        try:
+            os.rmdir(path)
+            debug(f"removed the empty {path}")
+        except OSError as exc:
+            debug(f"cannot remove {path}: {exc}")
 
 
 # --------------------------------------------------------------------------
