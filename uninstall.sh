@@ -10,6 +10,9 @@
 # it finds every store home under the known roots, has each store's own engine
 # purge what it installed, and then deletes the store.
 #
+# Three engines exist today — Batocera, RetroArch and desktop — and the last two
+# share a store root, so a home is identified by which engine file is in it.
+#
 #   DRY_RUN=1   print what would go, remove nothing
 #   KEEP_GAMES=1  leave the installed games alone, remove only the scripts
 #   FORCE=1     purge even while RetroArch is running
@@ -86,18 +89,31 @@ if [ -d "$BATOCERA_STORE_ROOT" ]; then
   [ "$DRY_RUN" = "1" ] || rmdir "$BATOCERA_STORE_ROOT" 2>/dev/null || true
 fi
 
-# --- RetroArch stores ------------------------------------------------------
+# --- RetroArch and desktop stores -----------------------------------------
+# Both live under the same root, one directory per store id, told apart by the
+# engine file inside. A store id can even carry both.
 if [ -d "$STORE_ROOT" ]; then
   extra=""
   [ "$FORCE" = "1" ] && extra="--force"
   for home in "$STORE_ROOT"/*/; do
     [ -f "$home/config.json" ] || continue
-    id="$(basename "$home")"
-    FOUND=$((FOUND + 1))
-    say "retroarch store '$id' in $home"
-    purge_store "${home%/}" retroarch_store.py RETROARCH_STORE_HOME "$extra"
-    run rm -f "$BIN_DIR/$id-retroarch-store"
-    run rm -rf "${home%/}"
+    name="$(basename "$home")"
+    home="${home%/}"
+    if [ -f "$home/retroarch_store.py" ]; then
+      id="${name%-retroarch}"
+      FOUND=$((FOUND + 1))
+      say "retroarch store '$id' in $home"
+      purge_store "$home" retroarch_store.py RETROARCH_STORE_HOME "$extra"
+      run rm -f "$BIN_DIR/$id-retroarch-store"
+    fi
+    if [ -f "$home/desktop_store.py" ]; then
+      id="${name%-desktop}"
+      FOUND=$((FOUND + 1))
+      say "desktop store '$id' in $home"
+      purge_store "$home" desktop_store.py DESKTOP_STORE_HOME ""
+      run rm -f "$BIN_DIR/$id-desktop-store"
+    fi
+    run rm -rf "$home"
   done
   [ "$DRY_RUN" = "1" ] || rmdir "$STORE_ROOT" 2>/dev/null || true
 fi

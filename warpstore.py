@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 # Bumped when the on-disk shape of state.json changes. v1 keyed `installed` by
 # bare software name; v2 keys by `<scope>:<name>`.
@@ -390,13 +390,25 @@ def asset_basename(path):
     return os.path.basename((path or "").rstrip("/"))
 
 
-def pick_release(entry, kind, ext):
-    """Newest non-dev release that carries the asset kind we need.
+def pick_release(entry, kinds, ext):
+    """Newest non-dev release that carries an asset kind we can use.
 
     `releases` comes back from the API already sorted newest-first, and
     `latestRelease` is the newest stable one — check that first, then walk the
     rest so a game whose newest build is missing the asset still installs.
+
+    `kinds` may be one kind or several in order of preference. Release order
+    wins over kind order: the newest release that has *any* acceptable kind is
+    taken, and within it the most preferred kind. That is what a desktop host
+    wants — on Apple Silicon `mac_universal` beats `mac_x64`, which would need
+    Rosetta, but not at the price of installing an older release.
+
+    Returns (release, asset_name, kind, asset_path).
     """
+    if isinstance(kinds, str) or kinds is None:
+        kinds = [kinds]
+    kinds = [k for k in kinds if k]
+
     candidates = []
     latest = entry.get("latestRelease")
     if latest:
@@ -411,14 +423,17 @@ def pick_release(entry, kind, ext):
         seen.add(rid)
         if str(release.get("version", "")).startswith("dev-"):
             continue
-        for asset in release.get("assets") or []:
-            if asset.get("kind") != kind:
-                continue
-            name = asset_basename(asset.get("path", ""))
-            if not name or (ext and not name.lower().endswith(ext.lower())):
-                continue
-            return release, name
-    return None, None
+        assets = release.get("assets") or []
+        for kind in kinds:
+            for asset in assets:
+                if asset.get("kind") != kind:
+                    continue
+                path = asset.get("path", "")
+                name = asset_basename(path)
+                if not name or (ext and not name.lower().endswith(ext.lower())):
+                    continue
+                return release, name, kind, path
+    return None, None, None, None
 
 
 def select_games(cfg, catalog, accept, host_info=None):
@@ -461,16 +476,17 @@ def select_games(cfg, catalog, accept, host_info=None):
             skipped.append(f"{name}: {reason}")
             continue
 
-        kind = resolve_for_host(spec.get("kind"), host_info)
-        if not kind:
+        wanted = resolve_for_host(spec.get("kind"), host_info)
+        if not wanted:
             skipped.append(f"{name}: {sw.get('platform')} has no asset kind for "
                            f"{host_info['os']}/{host_info['arch']}")
             continue
         ext = resolve_for_host(spec.get("ext", ""), host_info) or ""
 
-        release, file_name = pick_release(entry, kind, ext)
+        release, file_name, kind, asset_path = pick_release(entry, wanted, ext)
         if not release:
-            skipped.append(f"{name}: no '{kind}' asset in any release")
+            listed = wanted if isinstance(wanted, str) else "/".join(wanted)
+            skipped.append(f"{name}: no '{listed}' asset in any release")
             continue
 
         record = {
@@ -480,6 +496,9 @@ def select_games(cfg, catalog, accept, host_info=None):
             "kind": kind,
             "version": str(release.get("version", "")),
             "asset": file_name,
+            # The catalog-side path, kept because not every asset is a download:
+            # an `html` build is a hosted directory, and a store may want its URL.
+            "asset_path": asset_path,
             "title": sw.get("title") or name,
             "desc": (sw.get("desc") or "").strip(),
             "author": (sw.get("author") or "").strip(),
