@@ -54,6 +54,31 @@ games, skipped = ws.select_games(cfg, ws.fetch_catalog(cfg, use_cache=True), acc
 playlist. It is what `state.json` is keyed by (`<scope>:<name>`), so two hosts
 can carry a game of the same name without colliding.
 
+### Listing what cannot be installed
+
+`select_games` answers what a store can install. `survey_catalog` answers the same
+question and keeps the rest, which is what a client needs to show a catalog honestly:
+
+```python
+games, skipped, unavailable = ws.survey_catalog(cfg, catalog, accept)
+```
+
+Each `unavailable` record carries `name`, `title`, `platform`, `desc`, `author`,
+`image_url`, the latest `version`, a `reason` code and a `detail` sentence. The codes:
+
+| Code | Meaning |
+|---|---|
+| `platform_off` | this store does not carry that platform at all |
+| `host_asset` | the platform has no asset kind for this OS and architecture |
+| `no_asset` | no release carries the asset it would need |
+| `vetoed` | the adapter's `accept` refused it |
+
+Titles the store *chooses* not to offer — the wrong status, an `only`/`exclude` list —
+are in none of the three lists: that is editorial, not a limitation of the machine. A
+platform switched off is reported, because to somebody looking at a catalog it reads as
+"not supported here". `select_games` is now a two-value wrapper around this, so an
+adapter that only installs needs no change.
+
 ## What is in here
 
 | Area | Functions |
@@ -64,7 +89,7 @@ can carry a game of the same name without colliding.
 | Store home | `init`, then `HOME`, `CONFIG_PATH`, `STATE_PATH`, `CATALOG_CACHE` |
 | HTTP | `http_get`, `http_download`, `api_url`, `download_url`, `user_agent` |
 | Host | `machine`, `host_os`, `host`, `resolve_for_host` |
-| Catalog | `fetch_catalog`, `select_games`, `pick_release`, `asset_basename`, `download_image` |
+| Catalog | `fetch_catalog`, `select_games`, `survey_catalog`, `pick_release`, `asset_basename`, `download_image` |
 | State | `load_state`, `save_state`, `game_key`, `record_scope`, `records_by_scope`, `match_keys`, `limit_to_names` |
 
 Four of them carry decisions worth knowing about.

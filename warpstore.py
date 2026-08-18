@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # Bumped when the on-disk shape of state.json changes. v1 keyed `installed` by
 # bare software name; v2 keys by `<scope>:<name>`.
@@ -444,6 +444,15 @@ def pick_release(entry, kinds, ext):
     return None, None, None, None
 
 
+# Why a title the store offers cannot be installed here. A client shows these rather
+# than hiding the title: "there is nothing for your machine" is an answer, and an
+# absent entry is not.
+UNAVAILABLE_PLATFORM = "platform_off"   # this store does not carry that platform
+UNAVAILABLE_HOST = "host_asset"         # the platform has no asset kind for this os/arch
+UNAVAILABLE_ASSET = "no_asset"          # no release carries the asset it would need
+UNAVAILABLE_VETO = "vetoed"             # the adapter refused it
+
+
 def select_games(cfg, catalog, accept, host_info=None):
     """Catalog -> (list of installable records, list of skip reasons).
 
@@ -455,22 +464,54 @@ def select_games(cfg, catalog, accept, host_info=None):
     where `scope` groups records the way the host groups them — a Batocera
     system, a RetroArch playlist — and `extras` are the host-specific fields the
     adapter wants on the record. To reject the title, it raises `Skip(reason)`.
+
+    See `survey_catalog` for the same walk with the unavailable titles kept.
+    """
+    games, skipped, _unavailable = survey_catalog(cfg, catalog, accept, host_info)
+    return games, skipped
+
+
+def survey_catalog(cfg, catalog, accept, host_info=None):
+    """Catalog -> (installable records, skip reasons, unavailable records).
+
+    The third list is what `select_games` throws away: one record per title this store
+    offers but this machine cannot install, each with a `reason` code from the
+    UNAVAILABLE_* set and a sentence for a person. A store that hides those titles is
+    lying about its catalog by omission, so a client can show them greyed out instead.
+
+    Titles the store *chooses* not to offer — the wrong status, an `only`/`exclude`
+    list, a platform switched off — are not in any of the three: that is editorial, not
+    a limitation of the machine. The one exception is a platform switched off, which is
+    reported, because to a person looking at a catalog it reads as "not supported here".
     """
     host_info = host_info or host()
     statuses = {s.lower() for s in cfg["catalog"].get("statuses") or []}
     only = {n.lower() for n in cfg["catalog"].get("only") or []}
     exclude = {n.lower() for n in cfg["catalog"].get("exclude") or []}
 
-    games, skipped = [], []
+    games, skipped, unavailable = [], [], []
+
+    def unmet(sw, entry, code, reason):
+        """One unavailable record, with enough for a client to draw a card."""
+        latest = entry.get("latestRelease") or {}
+        unavailable.append({
+            "name": sw.get("name"),
+            "title": sw.get("title") or sw.get("name"),
+            "platform": sw.get("platform"),
+            "desc": (sw.get("desc") or "").strip(),
+            "author": (sw.get("author") or "").strip(),
+            "image_url": sw.get("imageUrl"),
+            "version": str(latest.get("version", "")),
+            "reason": code,
+            "detail": reason,
+        })
+
     for entry in catalog.get("softwares") or []:
         sw = entry.get("software") or {}
         name = sw.get("name")
         if not name:
             continue
 
-        spec = (cfg["platforms"] or {}).get(sw.get("platform"))
-        if not spec or not spec.get("enabled", True):
-            continue
         if statuses and str(sw.get("status", "")).lower() not in statuses:
             continue
         if only and name.lower() not in only:
@@ -478,23 +519,34 @@ def select_games(cfg, catalog, accept, host_info=None):
         if name.lower() in exclude:
             continue
 
+        spec = (cfg["platforms"] or {}).get(sw.get("platform"))
+        if not spec or not spec.get("enabled", True):
+            unmet(sw, entry, UNAVAILABLE_PLATFORM,
+                  f"{sw.get('platform')} is not carried by this store")
+            continue
+
         try:
             scope, extras = accept(spec, sw)
         except Skip as reason:
             skipped.append(f"{name}: {reason}")
+            unmet(sw, entry, UNAVAILABLE_VETO, str(reason))
             continue
 
         wanted = resolve_for_host(spec.get("kind"), host_info)
         if not wanted:
-            skipped.append(f"{name}: {sw.get('platform')} has no asset kind for "
-                           f"{host_info['os']}/{host_info['arch']}")
+            reason = (f"{sw.get('platform')} has no asset kind for "
+                      f"{host_info['os']}/{host_info['arch']}")
+            skipped.append(f"{name}: {reason}")
+            unmet(sw, entry, UNAVAILABLE_HOST, reason)
             continue
         ext = resolve_for_host(spec.get("ext", ""), host_info) or ""
 
         release, file_name, kind, asset_path = pick_release(entry, wanted, ext)
         if not release:
             listed = wanted if isinstance(wanted, str) else "/".join(wanted)
-            skipped.append(f"{name}: no '{listed}' asset in any release")
+            reason = f"no '{listed}' asset in any release"
+            skipped.append(f"{name}: {reason}")
+            unmet(sw, entry, UNAVAILABLE_ASSET, reason)
             continue
 
         record = {
@@ -515,7 +567,7 @@ def select_games(cfg, catalog, accept, host_info=None):
         }
         record.update(extras or {})
         games.append(record)
-    return games, skipped
+    return games, skipped, unavailable
 
 
 def image_url(cfg, game):
