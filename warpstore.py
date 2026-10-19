@@ -253,7 +253,11 @@ def api_url(cfg, endpoint, params=None):
 
 
 def download_url(cfg, asset):
-    """`GET /api/download` rather than `/file/`, so downloads are counted."""
+    """`GET /api/download` rather than `/file/`, so the host sees each download.
+
+    Whether it counts them is the host's call: teletypegames.org leaves the
+    `warpstore/*` user agent out on purpose (`ignored_user_agents`).
+    """
     return api_url(cfg, "download", {"path": asset})
 
 
