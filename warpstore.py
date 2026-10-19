@@ -28,7 +28,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 # Bumped when the on-disk shape of state.json changes. v1 keyed `installed` by
 # bare software name; v2 keys by `<scope>:<name>`.
@@ -376,13 +376,40 @@ def resolve_for_host(value, host_info=None):
 # --------------------------------------------------------------------------
 
 
-def fetch_catalog(cfg, use_cache=False):
-    """The whole catalog, cached next to the config so a sync survives an outage."""
+def catalog_params(cfg):
+    """The filters the server can apply itself. `select_games` applies them again,
+    so a host that predates a parameter and ignores it only sends a longer list."""
+    params = {}
     owner = cfg["catalog"].get("owner_id")
-    url = api_url(cfg, "catalog", {"owner_id": owner} if owner is not None else None)
+    if owner is not None:
+        params["owner_id"] = owner
+    statuses = [str(s) for s in cfg["catalog"].get("statuses") or []]
+    if statuses:
+        params["status"] = ",".join(statuses)
+    return params
+
+
+def fetch_catalog(cfg, use_cache=False):
+    """The whole catalog, cached next to the config so a sync survives an outage.
+
+    Asked for without `page`, a host answers with everything in one envelope. One
+    that pages anyway says so in `nextPage`, and the rest is fetched page by page,
+    so a host-side default can never quietly cut the catalog short.
+    """
+    params = catalog_params(cfg)
+    url = api_url(cfg, "catalog", params or None)
     try:
         body, _ = http_get(cfg, url)
         data = json.loads(body.decode("utf-8"))
+        seen = {data.get("page") or 1}
+        page = data.get("nextPage")
+        while page and page not in seen:
+            seen.add(page)
+            body, _ = http_get(cfg, api_url(cfg, "catalog", dict(params, page=page)))
+            more = json.loads(body.decode("utf-8"))
+            data.setdefault("softwares", []).extend(more.get("softwares") or [])
+            page = more.get("nextPage")
+        data["nextPage"] = None
         write_json(CATALOG_CACHE, data)
         return data
     except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -451,6 +478,7 @@ UNAVAILABLE_PLATFORM = "platform_off"   # this store does not carry that platfor
 UNAVAILABLE_HOST = "host_asset"         # the platform has no asset kind for this os/arch
 UNAVAILABLE_ASSET = "no_asset"          # no release carries the asset it would need
 UNAVAILABLE_VETO = "vetoed"             # the adapter refused it
+UNAVAILABLE_GATED = "gated"             # the host sells it, and a store cannot buy
 
 
 def select_games(cfg, catalog, accept, host_info=None):
@@ -504,6 +532,7 @@ def survey_catalog(cfg, catalog, accept, host_info=None):
             "version": str(latest.get("version", "")),
             "reason": code,
             "detail": reason,
+            "purchase_url": (entry.get("access") or {}).get("purchaseUrl"),
         })
 
     for entry in catalog.get("softwares") or []:
@@ -523,6 +552,16 @@ def survey_catalog(cfg, catalog, accept, host_info=None):
         if not spec or not spec.get("enabled", True):
             unmet(sw, entry, UNAVAILABLE_PLATFORM,
                   f"{sw.get('platform')} is not carried by this store")
+            continue
+
+        # A store downloads anonymously, so a gated title would only come back as
+        # a refused download in the middle of a sync. Say why up front instead.
+        access = entry.get("access") or {}
+        if access.get("gated") and not access.get("entitled"):
+            where = access.get("purchaseUrl") or access.get("webUrl")
+            reason = "sold on the store's site" + (f" ({where})" if where else "")
+            skipped.append(f"{name}: {reason}")
+            unmet(sw, entry, UNAVAILABLE_GATED, reason)
             continue
 
         try:

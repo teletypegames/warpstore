@@ -64,7 +64,8 @@ games, skipped, unavailable = ws.survey_catalog(cfg, catalog, accept)
 ```
 
 Each `unavailable` record carries `name`, `title`, `platform`, `desc`, `author`,
-`image_url`, the latest `version`, a `reason` code and a `detail` sentence. The codes:
+`image_url`, the latest `version`, a `reason` code, a `detail` sentence and the
+`purchase_url` the catalog gives, if any. The codes:
 
 | Code | Meaning |
 |---|---|
@@ -72,12 +73,20 @@ Each `unavailable` record carries `name`, `title`, `platform`, `desc`, `author`,
 | `host_asset` | the platform has no asset kind for this OS and architecture |
 | `no_asset` | no release carries the asset it would need |
 | `vetoed` | the adapter's `accept` refused it |
+| `gated` | the host sells it; a store downloads anonymously, so it cannot have it |
 
 Titles the store *chooses* not to offer — the wrong status, an `only`/`exclude` list —
 are in none of the three lists: that is editorial, not a limitation of the machine. A
 platform switched off is reported, because to somebody looking at a catalog it reads as
 "not supported here". `select_games` is now a two-value wrapper around this, so an
 adapter that only installs needs no change.
+
+### Fetching the catalog
+
+`fetch_catalog` asks the host to filter by `owner_id` and `catalog.statuses` itself
+(`status=released,archived`), and follows `nextPage` if the host pages the answer
+anyway. Both are only a shorter download: `survey_catalog` applies the same filters
+again, so a host that ignores a parameter changes nothing.
 
 ## What is in here
 
